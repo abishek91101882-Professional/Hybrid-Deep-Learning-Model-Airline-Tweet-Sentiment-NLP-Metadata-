@@ -1,0 +1,207 @@
+from tensorflow.keras.layers import Dropout
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import LeakyReLU
+from tensorflow.python.keras.utils.metrics_utils import ConfusionMatrix
+
+#The dataset has 4 features of which we use 2 as inputs and 1 as outputs(sentiment)
+df=pd.read_csv(r'C:\Users\abhishek.sakthivel\Downloads\Tweets_airline\Airline_Rnn_dataset.csv')
+print(df.dtypes)
+print(df.columns)
+#print(df)
+
+#Cleaning the dataset
+#Here we don;t have any missing values
+#Also the dataset in not continuous so thee won't be any outliers except noises
+df.dropna()
+print(df)
+
+#To known about the no.of classes we have
+print(Counter(df.sentiment))
+print(Counter(df.airline))
+
+#Count of airlines
+#sn.countplot(df.airline,palette='Set2') #Bar graph will be horizontal
+#sn.countplot(x='airline',data=df,palette='Set2') #Bar graph will be vertical
+#plt.show()
+
+#Grouping the data to see how the class of reviews distributed over different airlines
+grouped=df.groupby(['airline','sentiment'])
+print(grouped.size())
+
+#Let's do that same grouping and try to visualize it in a table
+table1=pd.crosstab(index=df.airline,columns=df.sentiment)
+print(table1)
+#table1.plot(kind='bar',figsize=(8,8),stacked=True)
+#plt.show()
+
+#Converting the airline features to numbers
+#We have two types of data - nominal and ordinal data
+#Nominal - are the Categories with no order,Only labels, we can check they are equal or not like gender,colours,location
+#Ordinal - are the Categories with natural order, we can compare - greater / smaller, like customer ratings(good/bad), education level, ratings
+#We can use one-hot encoding but it will add extra 6 rows each for a features which will increase the dataframe size
+#So we are using Label encoders
+
+#print(pd.factorize(df.airline)) #This line will give both array and indexes
+print(pd.factorize(df.airline)[0]) #This will give only the array which we use it to replace it in dataframe
+#print(pd.factorize(df.airline)[1]) #This will give only the indexes.
+
+df.airline=pd.factorize(df.airline)[0]
+#df.airline.unique() #to check whether we have only 6 values, let's skip these
+
+df.sentiment=pd.factorize(df.sentiment)[0]
+print(df.sentiment.unique())
+print(Counter(df.sentiment))
+print(Counter(df.airline))
+
+#Cleaning the texts with Lematizer
+corpus1=[]
+stemmer=stem.PorterStemmer()
+lematizer=stem.WordNetLemmatizer()
+
+for i in range(0, len(df.text)):
+    review=re.sub('@VirginAmerica','',str(df.text[i]))
+    review=re.sub('@united','',str(review))
+    review=re.sub('@SouthwestAir','',str(review))
+    review=re.sub('@JetBlue','',str(review))
+    review=re.sub('@AmericanAir','',str(review))
+    review=re.sub('@USAirways','',str(review))
+    review=re.sub('[^a-zA-Z]',' ',str(review))
+    #removing all other letters except a-z & A-Z, that is why ^ symbol means negation given before a-zA-Z
+
+    review=review.lower()
+    review=review.split()#splitting each word into a list
+    review=[lematizer.lemmatize(word) for word in review if not word in stopwords.words('english')]
+    review=' '.join(review)
+    corpus1.append(review)
+
+print(corpus1[100])
+
+#Adding the cleaned text as new column to the dataframe
+df['cleantext']=corpus1
+
+import time
+tic=time.time() #to see how much time it takes to run the program - this is starting time
+
+#Creating one-hot representation and identifying max length of clean-text
+voc_size=20000 #vocabulary size
+onehot_repr= [one_hot(words,voc_size) for words in corpus1]
+list_onehot_repr=[]
+len(onehot_repr[0])
+
+for i in range(0,len(onehot_repr)):
+    length=len(onehot_repr[i])
+    list_onehot_repr.append(length)
+
+#Printing the length of each element in one-hot and storing it in a variable 'length'
+#It will be based on how many words we have after cleaning, two words means - 2 one_hot numbers based on voc_size
+#Then the length of the one_hot cell with 2 words will be 2.
+#Then those values are added to the empty list created under list_onehot_repr
+#With this we are finding the maximum length of words in a cleaned text to add pre padding and make all the cells of equal length
+
+
+print(len(list_onehot_repr))
+print(max(list_onehot_repr))
+tac=time.time()
+print('Time-taken for the code = {}'.format(tac-tic))
+
+#Building the Bidirectional LSTM model
+sent_length=25
+embedding_vectors_features=300
+embedded_docs=pad_sequences(onehot_repr,padding='pre',maxlen=sent_length)
+embedded_docs[0]
+#We have two types of data in out dataframe - numeric and text after the preprocessing
+#So we are doing the embedding layer on the text data by separating the that as nlp_input
+#Then taking the numeric data into separate with meta_input
+#Now after performing the embedding layer on text we combine that with numeric data
+#Finally we do the deep learning on the joined data.
+
+nlp_input=Input(shape=(sent_length,),name='nlp_input')
+meta_input=Input(shape=(1,),name='meta_input')
+#Now we are forming a embedding layer with 20000-vocabulary size with nlp_input we convert the text data to a 300 vector size
+emb=Embedding(voc_size,embedding_vectors_features,input_length=sent_length)(nlp_input)
+nlp_out=Bidirectional(LSTM(128))(emb)
+
+#Concat of text and numeric data
+x=concatenate([nlp_out,meta_input])
+x=Dropout(0.4)(x) #to avoid overfitting
+x=Dense(64,activation='relu')(x)
+x=Dense(3,activation='softmax')(x) #output layer with 3 neurons as output is three features positive,negative,neutral
+
+model=Model(inputs=[nlp_input,meta_input],outputs=[x])
+
+#Splitting the data to train
+#We have two different data-text and numeric, so we have to split the data into three ways
+#One for text data training and test
+#One for numeric data training and test
+#One for output validation
+
+x_final=embedded_docs #the text data
+s=df.airline #numeric data
+y=df.sentiment #output
+
+x_train,x_test,s_train,s_test,y_train,y_test = train_test_split(x_final,s,y,test_size=0.2,random_state=3,stratify=y)
+
+#Compiling the model with sparse_categorical_crossentropy and applying earlystopping to avoid overfitting
+#sparse_categorical_crossentropy - using this helps us to avoid onehot encode the ouput
+#categorical_crossentropy - using this then we have to onehot encode the output
+
+model.compile(loss='sparse_categorical_crossentropy',optimizer='adam',metrics=['accuracy'])
+es=EarlyStopping(monitor='val_loss',mode='min',verbose=1)
+
+#Training the model
+train_model=model.fit([x_train,s_train],y_train,validation_data=([x_test,s_test],y_test),
+                      epochs=50,callbacks=[es]) #Es-Earlystopping used as callbacks to avoid overfit
+
+#Predicting the data
+y_predict=model.predict([x_test,s_test])
+print(y_predict)
+#Since we have three outputs, the y_predict will have a rank 2 array of 3 elements
+#Each value in a cell is a probability value of the outputs neutral,positive,negative occuring for that statement
+#For the first review text - it will give 3 probability values, those values indicates what are the chances that this statement being neutral,positive,negative
+#The highest of these three will taken as the probability value for that statement using the below code y_pred_class
+
+y_pred_class=np.argmax(y_predict,axis=1)
+
+#Confusion Matrix
+cm=confusion_matrix(y_test,y_pred_class)
+plt.figure(figsize=(10,7))
+sn.heatmap(cm,annot=True,fmt='d',cmap='Blues')
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.show()
+
+#Building Sequential model on clean text without numeric airline name data
+model2=Sequential()
+model2.add(Embedding(voc_size,embedding_vectors_features,input_length=sent_length))
+model2.add(LSTM(128))
+model2.add(Dense(64))
+model2.add(LeakyReLU(alpha=0.05))
+model2.add(Dense(16,activation='relu'))
+#model2.add(Bidirectional(LSTM(20)))
+model2.add(Dense(3,activation='softmax'))
+model2.compile(loss='sparse_categorical_crossentropy',optimizer='adam',metrics=['accuracy'])
+es=EarlyStopping(monitor='val_loss',mode='min',verbose=1)
+
+#Training the model
+train_model2=model2.fit(x_train,y_train,validation_data=(x_test,y_test),
+                      epochs=20,callbacks=[es])
+
+#Creating wordcloud visualization
+from wordcloud import WordCloud,STOPWORDS
+word_data=''
+stopword=set(STOPWORDS)
+
+for i in df.cleantext:
+    i=str(i) #Just to make sure all the inputs are in string format
+    tokens=i.split()
+    word_data +=' '.join(tokens)+' '
+
+word_cloud=WordCloud(width=800,height=800,background_color='white',stopwords=stopword,
+                     min_font_size=10).generate(word_data)
+
+plt.figure(figsize=(8,8),facecolor=None)
+plt.imshow(word_cloud)
+plt.axis('off')
+plt.tight_layout(pad=0)
+plt.show()
